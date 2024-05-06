@@ -64,11 +64,11 @@ def signal_align(array1, array2, windows_size=100):
 
     # Reorder the original signal according to the signal length.
     if long_signal == 1:
-        signal1 = signal_filtered(array1, 1, 7)
-        signal2 = signal_filtered(array2, 1, 7)
+        signal1 = signal_filtered(array1, 0, 7)
+        signal2 = signal_filtered(array2, 0, 7)
     else:
-        signal2 = signal_filtered(array1, 1, 7)
-        signal1 = signal_filtered(array2, 1, 7)
+        signal2 = signal_filtered(array1, 0, 7)
+        signal1 = signal_filtered(array2, 0, 7)
 
     # Concatenate the signals based on the offset.
     result = registration(s, signal1, signal2)
