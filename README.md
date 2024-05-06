@@ -1,2 +1,2 @@
-# 1Dl-signal-registration.
+# 1D-signal-registration.
 Implement signal registration between two signals by computing the Pearson correlation coefficient.
