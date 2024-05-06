@@ -59,14 +59,6 @@ def signal_align(array1, array2, windows_size=100):
             s = i - array2_len
             print(s)
 
-    # peaks_1, peaks_2 = find_peaks_test(max_1, max_2)
-    #
-    # plt.plot(max_1, label='max_1')
-    # plt.plot(peaks_1, max_1[peaks_1], 'x')
-    # plt.plot(max_2, label='max_2')
-    # plt.plot(peaks_2, max_2[peaks_2], '*')
-    # plt.show()
-
     # Weighted calculation to find the optimal offset.
     s = find_weight_max(max_1, max_2)
 
