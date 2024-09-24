@@ -1,10 +1,9 @@
-from scipy.ndimage.interpolation import shift
-from scipy.signal import medfilt, find_peaks
-from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import matplotlib.pyplot as plt
+
 from scipy.stats import pearsonr
-import bisect
+from scipy.signal import medfilt
+from scipy.signal import savgol_filter
 
 
 def signal_align(array1, array2, windows_size=100):
@@ -18,9 +17,12 @@ def signal_align(array1, array2, windows_size=100):
     :param windows_size: Initial value of the sliding window
     :return: Offset between signals, signal after registration
     """
+    global concat_axis1, concat_axis2
+    filtered_mode = 1
+    k_size = 11
 
-    # Preprocess the signal and return it sorted by length.
-    signal1, signal2, long_signal = signal_preprocessor(array1, array2, 1, 7)
+    # Preprocess the signal
+    signal1, signal2 = signal_preprocessor(array1, array2, filtered_mode, k_size)
 
     array1_len = len(signal1)
     array2_len = len(signal2)
@@ -31,8 +33,10 @@ def signal_align(array1, array2, windows_size=100):
     max_1 = np.zeros(array1_len)
     max_2 = np.zeros(array2_len)
 
+    smaller_len = min(array1_len, array2_len)
+
     # Iterate to calculate the correlation coefficient.
-    for i in range(windows_size, array2_len):
+    for i in range(windows_size, smaller_len):
         # Initialize the window for the computation.
         window1 = signal1[array1_len - i:]
         window2 = signal2[:i]
@@ -41,39 +45,30 @@ def signal_align(array1, array2, windows_size=100):
         correlation_coefficient, _ = pearsonr(window1, window2)
         max_1[i] = correlation_coefficient
 
-        if correlation_coefficient > max_value:
-            max_value = correlation_coefficient
-            s = array1_len - i
-            print(s)
-
     # Calculate the correlation coefficient by traversing in reverse.
-    for i in range(windows_size, array2_len):
-        window1 = signal1[:i]
-        window2 = signal2[array2_len - i:]
+    for j in range(windows_size, smaller_len):
+        window1 = signal1[:j]
+        window2 = signal2[array2_len - j:]
 
         correlation_coefficient, _ = pearsonr(window1, window2)
-        max_2[i] = correlation_coefficient
-
-        if correlation_coefficient > max_value:
-            max_value = correlation_coefficient
-            s = i - array2_len
-            print(s)
+        max_2[j] = correlation_coefficient
 
     # Weighted calculation to find the optimal offset.
     s = find_weight_max(max_1, max_2)
 
-    # Reorder the original signal according to the signal length.
-    if long_signal == 1:
-        signal1 = signal_filtered(array1, 0, 7)
-        signal2 = signal_filtered(array2, 0, 7)
+    if s > 0:
+        nan_array = np.full(s, np.nan)
+        concat_axis1 = array1
+        concat_axis2 = np.concatenate((nan_array, array2))
     else:
-        signal2 = signal_filtered(array1, 0, 7)
-        signal1 = signal_filtered(array2, 0, 7)
+        nan_array = np.full(abs(s), np.nan)
+        concat_axis1 = np.concatenate((nan_array, array1))
+        concat_axis2 = array2
 
-    # Concatenate the signals based on the offset.
-    result = registration(s, signal1, signal2)
 
-    return abs(s), result
+
+    return concat_axis1, concat_axis2, s
+
 
 def signal_preprocessor(array1, array2, method, kernel_size):
     """
@@ -81,35 +76,29 @@ def signal_preprocessor(array1, array2, method, kernel_size):
     :param array2:
     :param method: Filtering methods
     :param kernel_size:
-    :return: Filtered longer signal, filtered shorter signal, the numbering of longer signals in the original signal.
+    :return:
     """
-    array1_len = len(array1)
-    array2_len = len(array2)
-
-    # Filtering the signal.
     array1_f = signal_filtered(array1, method, kernel_size)
     array2_f = signal_filtered(array2, method, kernel_size)
 
-    # Sort the original signal by length.
-    if array1_len >= array2_len:
-        signal1 = array1_f
-        signal2 = array2_f
-        long_signal = 1
-    else:
-        signal1 = array2_f
-        signal2 = array1_f
-        long_signal = 2
-
     # Normalize the signal.
-    data1_2d = signal1.reshape(-1, 1)
-    data2_2d = signal2.reshape(-1, 1)
-    scaler = MinMaxScaler()
-    single1_n = scaler.fit_transform(data1_2d)
-    single2_n = scaler.fit_transform(data2_2d)
-    signal1 = single1_n.flatten()
-    signal2 = single2_n.flatten()
+    signal1 = min_max_normalization(array1_f)
+    signal2 = min_max_normalization(array2_f)
 
-    return signal1, signal2, long_signal
+    return signal1, signal2
+
+
+def min_max_normalization(signal):
+    """
+
+
+    :param signal:
+    :return:
+    """
+    min_val = np.min(signal)
+    max_val = np.max(signal)
+    normalized_signal = (signal - min_val) / (max_val - min_val)
+    return normalized_signal
 
 
 def signal_filtered(array, method, kernelsize):
@@ -121,55 +110,21 @@ def signal_filtered(array, method, kernelsize):
     :param kernelsize: kernel size
     :return: Filtered signal.
     """
+
     if method == 1:
         filtered_array = medfilt(array, kernel_size=kernelsize)
+    elif method == 2:
+        window = np.ones(kernelsize) / kernelsize
+
+        filtered_array = np.convolve(array, window, mode='same')
+    elif method == 3:
+        window_size = 50
+        filtered_array = np.convolve(array, np.ones(window_size) / window_size, mode='valid')
+    elif method == 4:
+        filtered_array = savgol_filter(array, window_length=11, polyorder=3)
     else:
         return array
     return filtered_array
-
-
-def registration(s, signal_1, signal_2):
-    """
-    After normalizing using Z-Score, perform inverse normalization to
-    eliminate differences between duplicated signals.
-
-    :param s: Offset between signals
-    :param signal_1:
-    :param signal_2:
-    :return: Registered signal
-    """
-    if s >= 0:
-        r1 = signal_1
-        r2 = signal_2
-    if s < 0:
-        r1 = signal_2
-        r2 = signal_1
-
-    length_1 = len(r1)
-    length_2 = len(r2)
-    s = abs(s)
-
-    normalized_data1 = (r1 - np.mean(r1[s:])) / np.std(r1[s:])
-    normalized_data2 = (r2 - np.mean(r2[:length_1 - s])) / np.std(r2[:length_1 - s])
-
-    avg_ratio = np.mean(r2[:length_1 - s]) / np.mean(r1[s:])
-    print("avg_ratio", avg_ratio)
-
-    if avg_ratio >= 1:
-        unstandardized_data = normalized_data1 * np.std(r2[:length_1 - s]) \
-                              + np.mean(r2[:length_1 - s])
-        result = np.concatenate((unstandardized_data[:s - 1], r2[:]))
-    else:
-        unstandardized_data = normalized_data2 * np.std(r1[s:]) + np.mean(r1[s:])
-        result = np.concatenate((r1, unstandardized_data[length_1 - s - 1:]))
-
-    return result
-
-
-def find_peaks_test(array1, array2):
-    array_1_peaks, _ = find_peaks(array1)
-    array_2_peaks, _ = find_peaks(array2)
-    return array_1_peaks, array_2_peaks
 
 
 def find_weight_max(array1, array2):
@@ -177,33 +132,26 @@ def find_weight_max(array1, array2):
     array2_len = len(array2)
 
     weighted_1 = [val * 0.9 + i * 0.1 / len(array1) for i, val in enumerate(array1)]
-    weighted_2 = [val * 0.9 + i * 0.1 / len(array2) for i, val in enumerate(array2)]
+    weighted_2 = [val * 0.9 + j * 0.1 / len(array2) for j, val in enumerate(array2)]
 
     max_index_1 = np.argmax(weighted_1)
     max_index_2 = np.argmax(weighted_2)
 
-    if max_index_1 >= max_index_2:
+    if weighted_1[max_index_1] >= weighted_2[max_index_2]:
         return array1_len - max_index_1
     else:
         return max_index_2 - array2_len
 
 
 if __name__ == "__main__":
-    signal_1 = np.genfromtxt('signal1.csv', delimiter=',', encoding='utf-8-sig')
-    signal_2 = np.genfromtxt('signal2.csv', delimiter=',', encoding='utf-8-sig')
+    signal_1 = np.genfromtxt("signal1.csv", delimiter=',', encoding='utf-8-sig')
+    signal_2 = np.genfromtxt("signal2.csv", delimiter=',', encoding='utf-8-sig')
+    clean_signal_1 = signal_1[~np.isnan(signal_1)]
+    clean_signal_2 = signal_2[~np.isnan(signal_2)]
 
-    #
-    s, result = signal_align(signal_1, signal_2, 10)
-    print('Shift value to align is', s)
+    signal1, signal2, s = signal_align(clean_signal_1, clean_signal_2, int(len(clean_signal_1) / 5))
+    print(s)
 
-    plt.subplot(2, 1, 1)
-    plt.plot(signal_1, label='singal_1')
-    plt.plot(signal_2, label='singal_2')
-    plt.legend(loc='best')
-    plt.ylim(bottom=0)
-
-    plt.subplot(2, 1, 2)
-    plt.plot(result, label='registration')
-    plt.legend(loc='best')
-    plt.ylim(bottom=0)
+    plt.plot(signal1)
+    plt.plot(signal2)
     plt.show()
